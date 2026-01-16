@@ -31,12 +31,16 @@ public class Main {
 //        userTable.insert(new RowLayout(schema, 4, "Paul", "Juma", "abc@gmail.com"));
 //        userTable.insert(new RowLayout(schema, 5, "Paul", "Juma", "abc@gmail.com"));
 
-//        userTable.update(3, new RowLayout(
-//                schema, 3, "Paul", "Juma", "cd@gmail.com"
-//        ));
 
-        boolean delete = userTable.delete(1);
-        System.out.println("Delete state is " + delete);
+        RowLayout rowLayout = userTable.findByPrimaryKey(5);
+        System.out.println("The item is: " + rowLayout);
+
+//        boolean delete = userTable.delete(1);
+//        System.out.println("Delete state is " + delete);
+//
+        userTable.update(3, new RowLayout(
+                schema, 3, "John", "Kamau", "cd@gmail.com"
+        ));
 
         for (RowLayout row : userTable.readAll()) {
             System.out.println(row);

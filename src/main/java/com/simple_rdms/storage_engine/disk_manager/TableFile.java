@@ -1,10 +1,8 @@
 package com.simple_rdms.storage_engine.disk_manager;
 
-
 import com.simple_rdms.storage_engine.page.Page;
 import com.simple_rdms.storage_engine.page.RowLayout;
 import com.simple_rdms.storage_engine.page.RowLocation;
-import com.simple_rdms.storage_engine.page.TableStats;
 import com.simple_rdms.storage_engine.schema.ColumnDef;
 import com.simple_rdms.storage_engine.schema.TableSchema;
 
@@ -13,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 public class TableFile {
+    public static final int PAGE_HEADER_SIZE = 8;
     private final DiskManager diskManager;
     private final TableSchema schema;
     // Maps primary key -> RowLocation (pageIndex, rowIndex)
@@ -28,7 +27,7 @@ public class TableFile {
         for (int pageIndex = 0; pageIndex < diskManager.pageCount(); pageIndex++) {
             Page page = diskManager.readPage(pageIndex);
             ByteBuffer buffer = page.buffer();
-            buffer.position(8);
+            buffer.position(PAGE_HEADER_SIZE);
 
             for (int rowIndex = 0; rowIndex < page.getRowCount(); rowIndex++) {
                 // Read deletion flag (1 byte)
@@ -36,7 +35,7 @@ public class TableFile {
                 RowLayout row = RowLayout.deserialize(buffer, schema);
 
                 Object primaryKey = row.getPrimaryKey();
-                // FIXED: Use RowLocation with both pageIndex AND rowIndex
+                //Use RowLocation with both pageIndex AND rowIndex
                 RowLocation location = new RowLocation(pageIndex, rowIndex);
                 primaryKeyIndex.put(primaryKey, location);
 
@@ -60,10 +59,10 @@ public class TableFile {
 
         // If the key was previously deleted, we can reuse the slot
         if (deletedKeys.contains(primaryKey)) {
-            RowLocation location = primaryKeyIndex.get(primaryKey);
-            updateRowAtLocation(location, row, false);
+//            RowLocation location = primaryKeyIndex.get(primaryKey);
+//            updateRowAtLocation(location, row, false);
             deletedKeys.remove(primaryKey);
-            return;
+            primaryKeyIndex.remove(primaryKey); //Remove old location
         }
 
         byte[] rowsByte = row.serialize();
@@ -105,9 +104,9 @@ public class TableFile {
             throw new RuntimeException("Cannot change primary key value");
         }
 
-        RowLocation location = primaryKeyIndex.get(primaryKey);
-        updateRowAtLocation(location, newRow, false);
+        if (!delete(primaryKey)) return false;
 
+        insert(newRow);
         return true;
     }
 
@@ -126,7 +125,7 @@ public class TableFile {
         ByteBuffer buffer = page.buffer();
 
         // Calculate the position of the deletion flag for this row
-        int position = 8; // Skip page header
+        int position = PAGE_HEADER_SIZE; // Skip page header
         for (int i = 0; i < location.getRowIndex(); i++) {
             position++; // Skip deletion flag
             position += getRowSize(buffer, position);
@@ -155,7 +154,7 @@ public class TableFile {
         RowLocation location = primaryKeyIndex.get(primaryKey);
         Page page = diskManager.readPage(location.getPageIndex());
         ByteBuffer buffer = page.buffer();
-        buffer.position(8);
+        buffer.position(PAGE_HEADER_SIZE);
 
         for (int r = 0; r <= location.getRowIndex(); r++) {
             byte deletedFlag = buffer.get();
@@ -178,7 +177,7 @@ public class TableFile {
         for (int pageIndex = 0; pageIndex < diskManager.pageCount(); pageIndex++) {
             Page pageData = diskManager.readPage(pageIndex);
             ByteBuffer buffer = pageData.buffer();
-            buffer.position(8); // Skip header
+            buffer.position(PAGE_HEADER_SIZE); // Skip header
 
             for (int rowIndex = 0; rowIndex < pageData.getRowCount(); rowIndex++) {
                 byte deletedFlag = buffer.get();
@@ -192,118 +191,6 @@ public class TableFile {
         }
 
         return rows;
-    }
-
-    /**
-     * Compact the table by removing deleted rows and rewriting pages
-     * Call this periodically to reclaim space
-     */
-    public void compact() throws IOException {
-        List<RowLayout> activeRows = readAll(); // Gets only non-deleted rows
-
-        // Clear everything
-        primaryKeyIndex.clear();
-        deletedKeys.clear();
-        diskManager.close();
-
-        // Recreate the file
-        DiskManager newDiskManager = new DiskManager("data/" + schema.getTableName() + ".tbl");
-
-        try {
-            java.lang.reflect.Field field = this.getClass().getDeclaredField("diskManager");
-            field.setAccessible(true);
-            field.set(this, newDiskManager);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to compact file", e);
-        }
-
-        // Reinsert all active rows
-        Page currentPage = new Page();
-        int currentPageIndex = 0;
-        int currentRowIndex = 0;
-
-        for (RowLayout row : activeRows) {
-            byte[] rowBytes = row.serialize();
-
-            if (!writeRowToPage(currentPage, rowBytes, false)) {
-                newDiskManager.writePage(currentPageIndex, currentPage);
-                currentPageIndex++;
-                currentRowIndex = 0;
-                currentPage = new Page();
-                writeRowToPage(currentPage, rowBytes, false);
-            }
-
-            primaryKeyIndex.put(row.getPrimaryKey(), new RowLocation(currentPageIndex, currentRowIndex));
-            currentRowIndex++;
-        }
-
-        if (currentPage.getRowCount() > 0) {
-            newDiskManager.writePage(currentPageIndex, currentPage);
-        }
-    }
-
-    /**
-     * Update a row at a specific location
-     */
-    private void updateRowAtLocation(RowLocation location, RowLayout newRow, boolean isDeleted) throws IOException {
-        Page page = diskManager.readPage(location.getPageIndex());
-        ByteBuffer buffer = page.buffer();
-
-        // Find the position of the row
-        int position = 8;
-        for (int i = 0; i < location.getRowIndex(); i++) {
-            position++; // Skip deletion flag
-            position += getRowSizeAtPosition(buffer, position);
-        }
-
-        // Update deletion flag
-        buffer.put(position, (byte) (isDeleted ? 1 : 0));
-        position++;
-
-        // Write the new row data
-        byte[] newRowBytes = newRow.serialize();
-        buffer.position(position);
-        buffer.put(newRowBytes);
-
-        diskManager.writePage(location.getPageIndex(), page);
-    }
-
-    /**
-     * Calculate the size of a row in bytes at a specific position
-     */
-    private int getRowSizeAtPosition(ByteBuffer buffer, int startPosition) {
-        int originalPosition = buffer.position();
-        buffer.position(startPosition);
-
-        int size = 0;
-        for (ColumnDef column : schema.getColumns()) {
-            switch (column.getType()) {
-                case INT -> {
-                    buffer.getInt();
-                    size += 4;
-                }
-                case STRING -> {
-                    int len = buffer.getInt();
-                    buffer.position(buffer.position() + len);
-                    size += 4 + len;
-                }
-                case BOOLEAN -> {
-                    buffer.get();
-                    size += 1;
-                }
-                case FLOAT -> {
-                    buffer.getFloat();
-                    size += 4;
-                }
-                case DOUBLE -> {
-                    buffer.getDouble();
-                    size += 8;
-                }
-            }
-        }
-
-        buffer.position(originalPosition);
-        return size;
     }
 
     /**
@@ -328,36 +215,7 @@ public class TableFile {
         return true;
     }
 
-    /**
-     * Get the number of active (non-deleted) rows
-     */
-    public int getRowCount() throws IOException {
-        return readAll().size();
-    }
-
-    /**
-     * Get the total number of rows including deleted ones
-     */
-    public int getTotalRowCount() throws IOException {
-        int count = 0;
-        for (int i = 0; i < diskManager.pageCount(); i++) {
-            Page page = diskManager.readPage(i);
-            count += page.getRowCount();
-        }
-        return count;
-    }
-
-    /**
-     * Get statistics about deleted rows
-     */
-    public TableStats getStats() throws IOException {
-        int total = getTotalRowCount();
-        int active = getRowCount();
-        int deleted = total - active;
-        return new TableStats(total, active, deleted);
-    }
-
-        private int getRowSize(ByteBuffer buffer, int startPosition) {
+    private int getRowSize(ByteBuffer buffer, int startPosition) {
         int originalPosition = buffer.position();
         buffer.position(startPosition);
 
