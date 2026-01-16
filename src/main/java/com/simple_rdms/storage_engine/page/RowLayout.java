@@ -1,4 +1,4 @@
-package com.simple_rdms.storage_engine.disk_manager;
+package com.simple_rdms.storage_engine.page;
 
 import com.simple_rdms.storage_engine.schema.ColumnDef;
 import com.simple_rdms.storage_engine.schema.TableSchema;
