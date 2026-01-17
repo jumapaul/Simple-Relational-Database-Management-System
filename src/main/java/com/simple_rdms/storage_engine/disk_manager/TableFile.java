@@ -5,10 +5,13 @@ import com.simple_rdms.storage_engine.page.RowLayout;
 import com.simple_rdms.storage_engine.page.RowLocation;
 import com.simple_rdms.storage_engine.schema.ColumnDef;
 import com.simple_rdms.storage_engine.schema.TableSchema;
+import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.*;
+
 
 public class TableFile {
     public static final int PAGE_HEADER_SIZE = 8;
@@ -19,9 +22,9 @@ public class TableFile {
     // Track deleted rows
     private final Set<Object> deletedKeys = new HashSet<>();
 
-    public TableFile(TableSchema schema) throws IOException {
+    public TableFile(TableSchema schema, Path filePath) throws IOException {
         this.schema = schema;
-        this.diskManager = new DiskManager("data/" + schema.getTableName() + ".tbl");
+        this.diskManager = new DiskManager(filePath);
 
         // Load all indexes and check deletion flags
         for (int pageIndex = 0; pageIndex < diskManager.pageCount(); pageIndex++) {
@@ -107,6 +110,9 @@ public class TableFile {
         if (!delete(primaryKey)) return false;
 
         insert(newRow);
+
+        System.out.println("After update - in deletedKeys: " + deletedKeys.contains(primaryKey));
+        System.out.println("After update - in primaryKeyIndex: " + primaryKeyIndex.containsKey(primaryKey));
         return true;
     }
 
@@ -154,18 +160,56 @@ public class TableFile {
         RowLocation location = primaryKeyIndex.get(primaryKey);
         Page page = diskManager.readPage(location.getPageIndex());
         ByteBuffer buffer = page.buffer();
-        buffer.position(PAGE_HEADER_SIZE);
+//        buffer.position(PAGE_HEADER_SIZE);
 
+        int position = PAGE_HEADER_SIZE;
         for (int r = 0; r <= location.getRowIndex(); r++) {
-            byte deletedFlag = buffer.get();
-            RowLayout row = RowLayout.deserialize(buffer, schema);
+//            byte deletedFlag = buffer.get();
+            position++;
+            position += getRowSizeAtPosition(buffer, position);
+        }
+        buffer.position(position);
+        byte deleteFlag = buffer.get();
 
-            if (r == location.getRowIndex()) {
-                return row;
+        if (deleteFlag == 1) {
+            return null;
+        }
+        return RowLayout.deserialize(buffer, schema);
+    }
+
+    private int getRowSizeAtPosition(ByteBuffer buffer, int startPosition) {
+        int originalPosition = buffer.position();
+        buffer.position(startPosition);
+
+        int size = 0;
+        for (ColumnDef columnDef : schema.getColumns()) {
+            switch (columnDef.getType()) {
+                case INT -> {
+                    buffer.getInt();
+                    size += 4;
+                }
+                case STRING -> {
+                    int len = buffer.getInt();
+                    buffer.position(buffer.position() + len);
+                    size += 4 + len;
+                }
+                case BOOLEAN -> {
+                    buffer.get();
+                    size += 1;
+                }
+                case FLOAT -> {
+                    buffer.getFloat();
+                    size += 4;
+                }
+                case DOUBLE -> {
+                    buffer.getDouble();
+                    size += 8;
+                }
             }
         }
 
-        return null;
+        buffer.position(originalPosition);
+        return size;
     }
 
     /**

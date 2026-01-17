@@ -1,19 +1,75 @@
 plugins {
     id 'java'
+    id 'org.springframework.boot' version '3.3.9'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'org.graalvm.buildtools.native' version '0.10.6'
 }
 
 group = 'com.simple_rdms'
 version = '1.0-SNAPSHOT'
+description = 'Simple RDMS'
+
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+//        vendor = JvmVendorSpec.GRAAL_VM
+    }
+}
+
+graalvmNative {
+    binaries {
+        main {
+            buildArgs.add('--enable-url-protocols=http,https')
+            buildArgs.add('--initialize-at-run-time=org.jline')
+            buildArgs.add('--report-unsupported-elements-at-runtime')
+            buildArgs.add('--install-exit-handlers')
+            buildArgs.add('--enable-http')
+            buildArgs.add('--enable-https')
+            buildArgs.add('--enable-all-security-services')
+            buildArgs.add('--initialize-at-run-time=org.jline.terminal.impl')
+            buildArgs.add('--initialize-at-run-time=org.jline.utils')
+            buildArgs.add('--add-opens=java.base/java.lang=ALL-UNNAMED')
+
+        }
+    }
+}
 
 repositories {
     mavenCentral()
+    maven { url = 'https://repo.spring.io/snapshot' }
+}
+
+ext {
+    set('springShellVersion', "3.4.1")
 }
 
 dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'org.springframework.shell:spring-shell-starter'
+    implementation 'org.jline:jline-terminal-jansi:3.21.0'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'org.springframework.shell:spring-shell-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
 }
 
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.shell:spring-shell-dependencies:${springShellVersion}"
+    }
+}
+
 test {
     useJUnitPlatform()
+}
+
+tasks.named('bootRun') {
+    standardInput = System.in
+    systemProperty 'spring.shell.interactive.enabled', 'true'
+    if (System.console() != null) {
+        systemProperty 'org.jline.terminal.dumb', 'false'
+    }
 }

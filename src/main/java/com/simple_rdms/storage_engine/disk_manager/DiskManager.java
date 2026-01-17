@@ -5,6 +5,7 @@ import com.simple_rdms.storage_engine.page.Page;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.Path;
 
 import static com.simple_rdms.utils.Constants.PAGE_SIZE;
 
@@ -15,8 +16,8 @@ public class DiskManager {
 
     private final RandomAccessFile file;
 
-    public DiskManager(String filePath) throws IOException {
-        File file = new File(filePath);
+    public DiskManager(Path filePath) throws IOException {
+        File file = new File(String.valueOf(filePath));
 
         //Ensure parent directory exists
         File parent = file.getParentFile();
